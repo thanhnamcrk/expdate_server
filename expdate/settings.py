@@ -15,7 +15,7 @@ from datetime import timedelta
 import json
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = (BASE_DIR / "expdate\config.json").resolve()
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 with open(CONFIG_PATH, "r") as f:
     origin_config = json.load(f)
 
