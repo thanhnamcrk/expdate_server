@@ -1,5 +1,5 @@
 {
-  "client": "https://nguyenthanhnam.io.vn/",
+  "client": "https://nguyenthanhnam.io.vn",
   "local": "http://localhost:3000",
   "server": "https://expdate-server.onrender.com"
 }
