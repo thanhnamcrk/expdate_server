@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from accounts.item_views import ItemCreateView
-from accounts.mysql_views import ProductDataView
+from accounts.mysql_views import ProductDataView , ProductListView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -25,4 +25,6 @@ urlpatterns = [
     path('accounts/', include('accounts.urls')),
     path('api/items/', ItemCreateView.as_view(), name='item-create'),  # Direct mapping for /api/items/
     path('api/product/<str:barcode>/', ProductDataView.as_view(), name='product-data'),  # Direct mapping for /api/product/<barcode>/
+    path('api/products/', ProductListView.as_view(), name='product-list'),
+
 ]
