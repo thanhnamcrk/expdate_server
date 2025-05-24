@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 import json
 import os
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -29,7 +30,7 @@ origin_urls = list(origin_config.values())
 SECRET_KEY = 'django-insecure-khis067xrdp3ooh+tj130z@10)*q*_-dxkwn2*!wg((e%5+pxw'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 

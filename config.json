@@ -1,5 +1,7 @@
 {
   "client": "https://square-shark-greatly.ngrok-free.app",
   "local": "http://localhost:3000",
-  "server": "https://expdate-server.onrender.com"
+  "server": "https://expdate-server.onrender.com",
+  "server_local": "https://smart-britain-travelling-parental.trycloudflare.com"
+  
 }
