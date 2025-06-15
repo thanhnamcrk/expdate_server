@@ -1,7 +1,5 @@
 {
   "client": "https://square-shark-greatly.ngrok-free.app",
   "local": "http://localhost:3000",
-  "server_local": "https://expdate-server.onrender.com",
-  "server": "https://dedicated-boxing-aware-notebooks.trycloudflare.com"
-  
+  "server": "https://expdate-server.onrender.com"
 }
