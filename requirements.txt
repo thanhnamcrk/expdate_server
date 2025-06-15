@@ -1,7 +1,7 @@
 asgiref==3.8.1
 certifi==2025.4.26
-Django>=4.2
-django-cors-headers==4.7.0
+Django==4.1.13
+django-cors-headers<4.7
 djangorestframework==3.16.0
 djangorestframework_simplejwt==5.5.0
 elastic-transport==8.17.1
