@@ -1,0 +1,12 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block object-tools %}
+    <div>
+        <form action="import-excel/" method="GET">
+            <input type="submit" value="Import Excel" class="button" style="float: right; margin-right: 5px;"/>
+        </form>
+    </div>
+    <br/>
+    {{ block.super }}
+{% endblock %} 

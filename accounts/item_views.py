@@ -7,6 +7,7 @@ from django.contrib.auth.models import User  # Import the User model
 from django.utils.timezone import now
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from datetime import timedelta
 
 class ItemSerializer(serializers.Serializer):
     barcode = serializers.CharField(max_length=100)
@@ -41,17 +42,18 @@ class ItemCreateView(APIView):
                     except Exception:
                         pass
             existing_item = Item.objects.filter(barcode=data['barcode'], expdate=expdate, user=user).first()
+            def format_expdate(dt):
+                if not dt:
+                    return ''
+                return dt.strftime('%d/%m/%Y')
             if existing_item:
                 # Update the quantity of the existing item
                 existing_item.quantity += data['quantity']
                 existing_item.save()
                 serializer_data = serializer.data.copy()
                 serializer_data['quantity'] = existing_item.quantity
-                return Response({
-                    "message": "Item quantity updated successfully",
-                    "data": serializer_data,
-                    "iid": existing_item.id
-                }, status=status.HTTP_200_OK)
+                serializer_data['expdate'] = format_expdate(existing_item.expdate)
+                item_obj = existing_item
             else:
                 # Save the new item to the database
                 item = Item.objects.create(
@@ -61,11 +63,26 @@ class ItemCreateView(APIView):
                     expdate=data['expdate'],
                     user=user  # Associate the item with the provided user
                 )
-                return Response({
-                    "message": "Item created successfully",
-                    "data": serializer.data,
-                    "iid": item.id
-                }, status=status.HTTP_201_CREATED)
+                serializer_data = serializer.data.copy()
+                serializer_data['expdate'] = format_expdate(item.expdate)
+                item_obj = item
+            # Tính lại số lượng realtime
+            from datetime import timedelta
+            today = now().date()
+            soon_threshold = today + timedelta(days=15)
+            user_items = Item.objects.filter(user=user)
+            expired_count = user_items.filter(expdate__lt=today).count()
+            soon_expire_count = user_items.filter(expdate__gte=today, expdate__lte=soon_threshold).count()
+            valid_count = user_items.filter(expdate__gt=soon_threshold).count()
+            return Response({
+                "message": "Item created successfully" if not existing_item else "Item quantity updated successfully",
+                "data": serializer_data,
+                "iid": item_obj.id,
+                "user_id": user.id,  # Thêm user_id vào response
+                "expired_count": expired_count,
+                "soon_expire_count": soon_expire_count,
+                "valid_count": valid_count
+            }, status=status.HTTP_201_CREATED if not existing_item else status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ItemListByGroupView(APIView):
@@ -73,34 +90,57 @@ class ItemListByGroupView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
         user = request.user
+        # Xóa các item hết hạn > 30 ngày
+        today = now().date()
+        threshold = today - timedelta(days=30)
+        Item.objects.filter(expdate__lt=threshold).delete()
         try:
             group = user.profile.group
         except AttributeError:
             return Response({'error': 'User or group not found'}, status=status.HTTP_404_NOT_FOUND)
-        # Lấy tất cả user trong cùng group
         users_in_group = User.objects.filter(profile__group=group)
-        users_data = []
         is_manage = user.is_staff or user.is_superuser
+        soon_threshold = today + timedelta(days=15)
+        users_data = []
         for u in users_in_group:
             items = Item.objects.filter(user=u)
-            items_data = [
-                {
-                    'id': item.id,
-                    'barcode': item.barcode,
-                    'itemname': item.itemname,
-                    'quantity': item.quantity,
-                    'expdate': item.expdate,
-                    'can_edit': is_manage or (item.user == user),
-                    'can_delete': is_manage or (item.user == user),
-                }
-                for item in items
-            ]
+            expired_count = items.filter(expdate__lt=today).count()
+            soon_expire_count = items.filter(expdate__gte=today, expdate__lte=soon_threshold).count()
+            valid_count = items.filter(expdate__gt=soon_threshold).count()
             users_data.append({
-                'username': u.username,
+                'id': u.id,
+                # 'username': u.username,
                 'full_name': u.profile.fullname if hasattr(u, 'profile') else '',
-                'items': items_data
+                'expired_count': expired_count,
+                'soon_expire_count': soon_expire_count,
+                'valid_count': valid_count
             })
-        return Response({'group': group, 'users': users_data}, status=status.HTTP_200_OK)
+        return Response({'group': group, 'users': users_data, 'is_manage': is_manage}, status=status.HTTP_200_OK)
+
+class UserItemListView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    def get(self, request, user_id):
+        current_user = request.user
+        is_manage = current_user.is_staff or current_user.is_superuser
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        items = Item.objects.filter(user=user)
+        items_data = [
+            {
+                'id': item.id,
+                'barcode': item.barcode,
+                'itemname': item.itemname,
+                'quantity': item.quantity,
+                'expdate': item.expdate,
+                'can_edit': is_manage or (item.user == current_user),
+                'can_delete': is_manage or (item.user == current_user),
+            }
+            for item in items
+        ]
+        return Response({'user_id': user.id, 'username': user.username, 'items': items_data}, status=status.HTTP_200_OK)
 
 class ItemDeleteView(APIView):
     authentication_classes = [JWTAuthentication]
@@ -114,8 +154,22 @@ class ItemDeleteView(APIView):
             return Response({'error': 'Item not found'}, status=status.HTTP_404_NOT_FOUND)
 
         if item.user == user or user.is_staff or user.is_superuser:
+            item_user = item.user
             item.delete()
-            return Response({'message': 'Item deleted successfully'}, status=status.HTTP_200_OK)
+            # Tính lại số lượng các loại sản phẩm của user sau khi xóa
+            from datetime import timedelta
+            today = now().date()
+            soon_threshold = today + timedelta(days=15)
+            user_items = Item.objects.filter(user=item_user)
+            expired_count = user_items.filter(expdate__lt=today).count()
+            soon_expire_count = user_items.filter(expdate__gte=today, expdate__lte=soon_threshold).count()
+            valid_count = user_items.filter(expdate__gt=soon_threshold).count()
+            return Response({
+                'message': 'Item deleted successfully',
+                'expired_count': expired_count,
+                'soon_expire_count': soon_expire_count,
+                'valid_count': valid_count
+            }, status=status.HTTP_200_OK)
 
         return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -133,11 +187,46 @@ class ItemUpdateView(APIView):
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         serializer = ItemSerializer(item, data=request.data, partial=True)
         if serializer.is_valid():
-            for attr, value in serializer.validated_data.items():
-                setattr(item, attr, value)
-            item.save()
+            data = serializer.validated_data
+            # Kiểm tra nếu có barcode, itemname, expdate trùng với item khác thì chỉ update quantity
+            barcode = data.get('barcode', item.barcode)
+            itemname = data.get('itemname', item.itemname)
+            expdate = data.get('expdate', item.expdate)
+            # Đảm bảo expdate là date
+            if isinstance(expdate, str):
+                from datetime import datetime
+                try:
+                    expdate = datetime.strptime(expdate, '%Y-%m-%d').date()
+                except ValueError:
+                    try:
+                        expdate = datetime.strptime(expdate, '%d/%m/%Y').date()
+                    except Exception:
+                        pass
+            duplicate = Item.objects.filter(barcode=barcode, itemname=itemname, expdate=expdate, user=user).exclude(id=item.id).first()
+            if duplicate:
+                # Nếu trùng, cộng quantity vào item trùng, xóa item hiện tại
+                duplicate.quantity += data.get('quantity', item.quantity)
+                duplicate.save()
+                item.delete()
+                item = duplicate
+            else:
+                for attr, value in data.items():
+                    setattr(item, attr, value)
+                item.save()
+            # Tính lại số lượng các loại sản phẩm của user
+            from datetime import timedelta
+            today = now().date()
+            soon_threshold = today + timedelta(days=15)
+            user_items = Item.objects.filter(user=user)
+            expired_count = user_items.filter(expdate__lt=today).count()
+            soon_expire_count = user_items.filter(expdate__gte=today, expdate__lte=soon_threshold).count()
+            valid_count = user_items.filter(expdate__gt=soon_threshold).count()
             return Response({
                 'message': 'Item updated successfully',
-                'iid': item.id
+                'item': ItemSerializer(item).data,
+                'id': item.id,
+                'expired_count': expired_count,
+                'soon_expire_count': soon_expire_count,
+                'valid_count': valid_count
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

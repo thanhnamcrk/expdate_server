@@ -17,7 +17,8 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from accounts.item_views import ItemCreateView
-from accounts.mysql_views import ProductDataView , ProductListView
+from accounts.mysql_views import ProductDataView, ProductSearchView, ProductDetailView
+from django.contrib.auth import views as auth_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -25,6 +26,12 @@ urlpatterns = [
     path('accounts/', include('accounts.urls')),
     path('api/items/', ItemCreateView.as_view(), name='item-create'),  # Direct mapping for /api/items/
     path('api/product/<str:barcode>/', ProductDataView.as_view(), name='product-data'),  # Direct mapping for /api/product/<barcode>/
-    path('api/products/', ProductListView.as_view(), name='product-list'),
+    path('api/product-search/', ProductSearchView.as_view(), name='product-search'),
+    path('api/product-detail/<int:id>/', ProductDetailView.as_view(), name='product-detail'),
 
+    # Django default password reset URLs
+    path('password_reset/', auth_views.PasswordResetView.as_view(), name='password_reset'),
+    path('password_reset/done/', auth_views.PasswordResetDoneView.as_view(), name='password_reset_done'),
+    path('reset/<uidb64>/<token>/', auth_views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
+    path('reset/done/', auth_views.PasswordResetCompleteView.as_view(), name='password_reset_complete'),
 ]

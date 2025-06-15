@@ -18,3 +18,20 @@ class Item(models.Model):
 
     def __str__(self):
         return f"{self.itemname} ({self.barcode})"
+    
+class ProductData(models.Model):
+    id = models.AutoField(primary_key=True)
+    item_barcode = models.CharField(max_length=50)
+    item_code = models.CharField(max_length=50)
+    item_name = models.CharField(max_length=255)
+    department = models.CharField(max_length=100)
+    category = models.CharField(max_length=100)
+    sub_category = models.CharField(max_length=100)
+    vendor_code = models.CharField(max_length=50)
+    vendor_name = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = 'product_data'  # Khớp đúng với bảng trong MySQL
+
+    def __str__(self):
+        return self.item_name
