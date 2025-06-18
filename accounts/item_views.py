@@ -8,6 +8,12 @@ from django.utils.timezone import now
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from datetime import timedelta
+import threading
+import time
+from django.core.mail import send_mail as django_send_mail
+from django.conf import settings
+from django.utils import timezone
+import datetime
 
 class ItemSerializer(serializers.Serializer):
     barcode = serializers.CharField(max_length=100)
@@ -114,6 +120,7 @@ class ItemListByGroupView(APIView):
                 'expired_count': expired_count,
                 'soon_expire_count': soon_expire_count,
                 'valid_count': valid_count
+                
             })
         return Response({'group': group, 'users': users_data, 'is_manage': is_manage}, status=status.HTTP_200_OK)
 
@@ -230,3 +237,396 @@ class ItemUpdateView(APIView):
                 'valid_count': valid_count
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# Gửi mail sử dụng SMTP thủ công (từ mail_api.py)
+def send_expiry_email(to_email, subject, body_html):
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    
+    # Template HTML cơ bản cho email
+    def get_email_template(content, email_type="info"):
+        """
+        Tạo template email đồng bộ
+        email_type: 'warning' (sắp hết hạn), 'danger' (đã hết hạn), 'info' (thông tin chung)
+        """
+        # Màu sắc theo loại email
+        colors = {
+            'warning': {
+                'primary': '#f39c12',
+                'secondary': '#e67e22',
+                'text': '#8b4513'
+            },
+            'danger': {
+                'primary': '#e74c3c',
+                'secondary': '#c0392b',
+                'text': '#722f37'
+            },
+            'info': {
+                'primary': '#3498db',
+                'secondary': '#2980b9',
+                'text': '#2c3e50'
+            }
+        }
+        
+        color_scheme = colors.get(email_type, colors['info'])
+        
+        signature = f"""
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid {color_scheme['primary']};">
+            <div style="font-size: 14px; color: #555555; line-height: 1.6;">
+                Trân trọng,<br>
+                <strong style="color: {color_scheme['primary']}; font-size: 16px;">Thành Nam</strong><br>
+                <span style="color: #888;">Founder @ nguyenthanhnam.io.vn</span><br>
+                <a href="https://nguyenthanhnam.io.vn/wp" style="color: {color_scheme['primary']}; text-decoration: none;">
+                    https://nguyenthanhnam.io.vn/wp
+                </a>
+            </div>
+        </div>
+        """
+        
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Thông Báo Hạn Sử Dụng</title>
+        </head>
+        <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8f9fa;">
+            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                
+                <!-- Header -->
+                <div style="background: linear-gradient(135deg, {color_scheme['primary']} 0%, {color_scheme['secondary']} 100%); padding: 30px 40px; text-align: center;">
+                    <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0.5px;">
+                        📦 Quản Lý Hạn Sử Dụng
+                    </h1>
+                    <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                        Hệ thống thông báo tự động
+                    </p>
+                </div>
+                
+                <!-- Content -->
+                <div style="padding: 40px;">
+                    {content}
+                </div>
+                
+                <!-- Signature -->
+                {signature}
+                
+                <!-- Footer -->
+                <div style="background-color: #f8f9fa; padding: 20px 40px; text-align: center; border-top: 1px solid #e9ecef;">
+                    <p style="color: #6c757d; font-size: 12px; margin: 0;">
+                        © 2025 nguyenthanhnam.io.vn - Hệ thống quản lý tự động
+                    </p>
+                </div>
+                
+            </div>
+        </body>
+        </html>
+        """
+    
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = "thanhnamsuken@gmail.com"
+    msg["To"] = to_email
+    msg.attach(MIMEText(body_html, "html"))
+    
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login("thanhnamsuken@gmail.com", "hnvjgqonbzpsxnvk")
+            server.sendmail(msg["From"], msg["To"], msg.as_string())
+    except Exception as e:
+        print(f"Send mail error: {e}")
+
+def create_item_card(item, now_date, card_type="warning"):
+    """
+    Tạo card sản phẩm với thiết kế đồng bộ
+    card_type: 'warning' (sắp hết hạn), 'danger' (đã hết hạn)
+    """
+    if card_type == "warning":
+        days_left = (item.expdate - now_date).days
+        status_text = 'hôm nay' if days_left == 0 else f'{days_left} ngày'
+        status_color = '#f39c12' if days_left > 3 else '#e74c3c'
+        border_color = '#f39c12'
+        icon = '⚠️'
+    else:  # danger
+        days_expired = (now_date - item.expdate).days
+        status_text = f'{days_expired} ngày'
+        status_color = '#e74c3c'
+        border_color = '#e74c3c'
+        icon = '❌'
+    
+    return f"""
+    <div style="
+        border: 2px solid {border_color}; 
+        border-radius: 12px; 
+        padding: 20px; 
+        margin-bottom: 16px; 
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        position: relative;
+    ">
+        <div style="position: absolute; top: -1px; right: 15px; font-size: 20px;">{icon}</div>
+        
+        <div style="display: grid; gap: 8px;">
+            <div style="display: flex; align-items: center;">
+                <span style="font-weight: 600; color: #2c3e50; font-size: 16px; margin-right: 8px;">📦</span>
+                <span style="font-weight: 600; color: #2c3e50; font-size: 16px;">{item.itemname}</span>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;">
+                <div>
+                    <span style="color: #888; font-size: 13px; font-weight: 500;">BARCODE</span><br>
+                    <span style="color: #495057; font-weight: 500;">{item.barcode}</span>
+                </div>
+                <div>
+                    <span style="color: #888; font-size: 13px; font-weight: 500;">SỐ LƯỢNG</span><br>
+                    <span style="color: #e67e22; font-weight: 600;">{item.quantity}</span>
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;">
+                <div>
+                    <span style="color: #888; font-size: 13px; font-weight: 500;">HẠN SỬ DỤNG</span><br>
+                    <span style="color: #c0392b; font-weight: 600;">{item.expdate.strftime('%d/%m/%Y')}</span>
+                </div>
+                <div>
+                    <span style="color: #888; font-size: 13px; font-weight: 500;">
+                        {'CÒN LẠI' if card_type == 'warning' else 'ĐÃ HẾT HẠN'}
+                    </span><br>
+                    <span style="color: {status_color}; font-weight: 700; font-size: 15px;">{status_text}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
+def seconds_until_next_midnight():
+    import datetime
+    now = datetime.datetime.now()
+    tomorrow = now + datetime.timedelta(days=1)
+    midnight = datetime.datetime.combine(tomorrow.date(), datetime.time(0, 0, 0))
+    return (midnight - now).total_seconds()
+
+# Hàm kiểm tra và gửi mail định kỳ - CẢI TIẾN
+def check_and_notify_expiring_items():
+    while True:
+        now_date = timezone.now().date()
+        soon_threshold = now_date + timedelta(days=15)
+        users = User.objects.all()
+        
+        for user in users:
+            email = user.email
+            if not email:
+                continue
+                
+            expiring_items = Item.objects.filter(
+                user=user, 
+                expdate__gte=now_date, 
+                expdate__lte=soon_threshold
+            )
+            
+            if expiring_items.exists():
+                # Tạo danh sách sản phẩm với design mới
+                item_cards = "".join([
+                    create_item_card(item, now_date, "warning")
+                    for item in expiring_items
+                ])
+                
+                import datetime
+                now_str = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                subject = f"⚠️ Thông báo sản phẩm sắp hết hạn [{now_str}]"
+                
+                # Nội dung email với thiết kế mới
+                content = f"""
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); 
+                                padding: 20px; border-radius: 12px; border-left: 4px solid #f39c12;">
+                        <h2 style="color: #8b4513; margin: 0 0 8px 0; font-size: 20px;">
+                            🔔 Cảnh Báo Hạn Sử Dụng
+                        </h2>
+                        <p style="color: #8b4513; margin: 0; font-size: 15px;">
+                            Bạn có <strong>{expiring_items.count()} sản phẩm</strong> sắp hết hạn trong 15 ngày tới
+                        </p>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 30px;">
+                    {item_cards}
+                </div>
+                
+                <div style="background-color: #e8f4fd; padding: 20px; border-radius: 12px; text-align: center;">
+                    <p style="color: #2980b9; margin: 0; font-size: 14px; font-weight: 500;">
+                        💡 <strong>Gợi ý:</strong> Vui lòng kiểm tra và đưa sản phẩm lên UPSELLING để tối ưu doanh thu!
+                    </p>
+                </div>
+                """
+                
+                # Sử dụng template mới
+                def get_email_template(content, email_type="warning"):
+                    colors = {
+                        'warning': {'primary': '#f39c12', 'secondary': '#e67e22'},
+                        'danger': {'primary': '#e74c3c', 'secondary': '#c0392b'},
+                    }
+                    color_scheme = colors.get(email_type, colors['warning'])
+                    
+                    signature = f"""
+                    <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid {color_scheme['primary']};">
+                        <div style="font-size: 14px; color: #555555; line-height: 1.6;">
+                            Trân trọng,<br>
+                            <strong style="color: {color_scheme['primary']}; font-size: 16px;">Thành Nam</strong><br>
+                            <span style="color: #888;">Founder @ nguyenthanhnam.io.vn</span><br>
+                            <a href="https://nguyenthanhnam.io.vn/wp" style="color: {color_scheme['primary']}; text-decoration: none;">
+                                https://nguyenthanhnam.io.vn/wp
+                            </a>
+                        </div>
+                    </div>
+                    """
+                    
+                    return f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    </head>
+                    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8f9fa;">
+                        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                            <div style="background: linear-gradient(135deg, {color_scheme['primary']} 0%, {color_scheme['secondary']} 100%); padding: 30px 40px; text-align: center;">
+                                <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">
+                                    📦 Quản Lý Hạn Sử Dụng
+                                </h1>
+                                <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                                    Hệ thống thông báo tự động
+                                </p>
+                            </div>
+                            <div style="padding: 40px;">
+                                {content}
+                            </div>
+                            {signature}
+                            <div style="background-color: #f8f9fa; padding: 20px 40px; text-align: center; border-top: 1px solid #e9ecef;">
+                                <p style="color: #6c757d; font-size: 12px; margin: 0;">
+                                    © 2025 nguyenthanhnam.io.vn - Hệ thống quản lý tự động
+                                </p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>
+                    """
+                
+                body_html = get_email_template(content, "warning")
+                send_expiry_email(email, subject, body_html)
+                
+        # Chỉ gửi mail đúng vào 12 giờ đêm mỗi ngày
+        time.sleep(seconds_until_next_midnight())
+
+# Hàm kiểm tra sản phẩm đã hết hạn - CẢI TIẾN
+def check_and_notify_expired_items():
+    while True:
+        now_date = timezone.now().date()
+        users = User.objects.all()
+        
+        for user in users:
+            email = user.email
+            if not email:
+                continue
+                
+            expired_items = Item.objects.filter(user=user, expdate__lt=now_date)
+            
+            if expired_items.exists():
+                # Tạo danh sách sản phẩm đã hết hạn
+                item_cards = "".join([
+                    create_item_card(item, now_date, "danger")
+                    for item in expired_items
+                ])
+                
+                import datetime
+                now_str = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                subject = f"🚨 Thông báo sản phẩm đã hết hạn [{now_str}]"
+                
+                content = f"""
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%); 
+                                padding: 20px; border-radius: 12px; border-left: 4px solid #e74c3c;">
+                        <h2 style="color: #722f37; margin: 0 0 8px 0; font-size: 20px;">
+                            🚨 Cảnh Báo Khẩn Cấp
+                        </h2>
+                        <p style="color: #722f37; margin: 0; font-size: 15px;">
+                            Bạn có <strong>{expired_items.count()} sản phẩm</strong> đã hết hạn sử dụng
+                        </p>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 30px;">
+                    {item_cards}
+                </div>
+                
+                <div style="background-color: #fee; padding: 20px; border-radius: 12px; text-align: center; border: 1px solid #fcc;">
+                    <p style="color: #c0392b; margin: 0; font-size: 14px; font-weight: 600;">
+                        ⚠️ <strong>Hành động ngay:</strong> Vui lòng kiểm tra và lấy sản phẩm ra khỏi kệ để đảm bảo an toàn!
+                    </p>
+                </div>
+                """
+                
+                def get_email_template_danger(content):
+                    signature = """
+                    <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #e74c3c;">
+                        <div style="font-size: 14px; color: #555555; line-height: 1.6;">
+                            Trân trọng,<br>
+                            <strong style="color: #e74c3c; font-size: 16px;">Thành Nam</strong><br>
+                            <span style="color: #888;">Founder @ nguyenthanhnam.io.vn</span><br>
+                            <a href="https://nguyenthanhnam.io.vn/wp" style="color: #e74c3c; text-decoration: none;">
+                                https://nguyenthanhnam.io.vn/wp
+                            </a>
+                        </div>
+                    </div>
+                    """
+                    
+                    return f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    </head>
+                    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8f9fa;">
+                        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                            <div style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); padding: 30px 40px; text-align: center;">
+                                <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">
+                                    🚨 Cảnh Báo Hết Hạn
+                                </h1>
+                                <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                                    Yêu cầu xử lý ngay lập tức
+                                </p>
+                            </div>
+                            <div style="padding: 40px;">
+                                {content}
+                            </div>
+                            {signature}
+                            <div style="background-color: #f8f9fa; padding: 20px 40px; text-align: center; border-top: 1px solid #e9ecef;">
+                                <p style="color: #6c757d; font-size: 12px; margin: 0;">
+                                    © 2025 nguyenthanhnam.io.vn - Hệ thống quản lý tự động
+                                </p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>
+                    """
+                
+                body_html = get_email_template_danger(content)
+                send_expiry_email(email, subject, body_html)
+                
+        # Chỉ gửi mail đúng vào 12 giờ đêm mỗi ngày
+        time.sleep(seconds_until_next_midnight())
+
+# Khởi động thread kiểm tra khi server chạy
+def start_expiry_check_thread():
+    import threading
+    t1 = threading.Thread(target=check_and_notify_expiring_items, daemon=True)
+    t2 = threading.Thread(target=check_and_notify_expired_items, daemon=True)
+    t1.start()
+    t2.start()
+
+start_expiry_check_thread()
+

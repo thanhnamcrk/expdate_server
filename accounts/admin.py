@@ -6,11 +6,15 @@ from django.utils.translation import gettext_lazy as _
 from django.urls import path
 from django.shortcuts import render
 from django.http import HttpResponseRedirect
+from django.contrib.admin import site
 from django.contrib import messages
 from openpyxl import load_workbook
 from datetime import datetime
 from .models import Profile, Item, ProductData
 from django.db import transaction
+
+# Monkey patch: Thay đổi hành vi của 'View site' trên admin
+site.site_url = 'https://square-shark-greatly.ngrok-free.app/'
 
 class ExcelImportForm(forms.Form):
     excel_file = forms.FileField(

@@ -35,6 +35,9 @@ class LoginView(APIView):
                 'access': str(refresh.access_token),
                 'refresh': str(refresh),
                 'full_name': full_name,
+                'is_staff': user.is_staff,
+                'is_superuser': user.is_superuser,
+                'is_active': user.is_active,
             })
         else:
             return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
